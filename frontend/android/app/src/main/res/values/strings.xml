@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">KinCheck</string>
+    <string name="title_activity_main">KinCheck</string>
+    <string name="package_name">cd.kincheck.app</string>
+    <string name="custom_url_scheme">cd.kincheck.app</string>
+</resources>
