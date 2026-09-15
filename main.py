@@ -13,7 +13,7 @@ import models, schemas, auth
 from database import engine, get_db
 
 # Clé API Groq
-GROQ_API_KEY = os.getenv("GROQ_API_KEY", "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")
+GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
 groq_client = Groq(api_key=GROQ_API_KEY)
 
 os.makedirs("uploads", exist_ok=True)
