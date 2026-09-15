@@ -91,7 +91,7 @@ function App() {
     e.preventDefault();
     setLoginErreur('');
     try {
-      const reponse = await fetch('http://10.161.110.232:8000/token', {
+      const reponse = await fetch('https://kincheck-api.onrender.com', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(loginForm)
@@ -111,10 +111,10 @@ function App() {
 
   const chargerDonneesAdmin = async () => {
     try {
-      const resUsers = await fetch('http://10.161.110.232:8000/token/api/v1/users/');
+      const resUsers = await fetch('https://kincheck-api.onrender.com/api/v1/users/');
       if (resUsers.ok) setListeUsers(await resUsers.json());
       
-      const resHist = await fetch('http://10.161.110.232:8000/token/api/v1/historique/');
+      const resHist = await fetch('https://kincheck-api.onrender.com/api/v1/historique/');
       if (resHist.ok) setListeHistorique(await resHist.json());
     } catch (err) {
       console.error("Erreur de chargement admin", err);
@@ -140,7 +140,7 @@ function App() {
     }
 
     try {
-      const reponse = await fetch(`http://10.161.110.232:8000/token/api/v1/vehicules/${encodeURIComponent(plaqueClean)}?agent_username=${user.username}`);
+      const reponse = await fetch(`https://kincheck-api.onrender.com/api/v1/vehicules/${encodeURIComponent(plaqueClean)}?agent_username=${user.username}`);
       if (!reponse.ok) throw new Error("Plaque introuvable ou véhicule non enregistré.");
       setResultat(await reponse.json());
     } catch (err) {
@@ -161,7 +161,7 @@ function App() {
     formData.append('file', fichier);
 
     try {
-      const res = await fetch('http://10.161.110.232:8000/token/api/v1/ia/analyser-plaque', {
+      const res = await fetch('https://kincheck-api.onrender.com/api/v1/ia/analyser-plaque', {
         method: 'POST',
         body: formData
       });
@@ -185,7 +185,7 @@ function App() {
     setVehiculeMsg('');
 
     try {
-      const reponse = await fetch('http://10.161.110.232:8000/token/api/v1/vehicules/', {
+      const reponse = await fetch('https://kincheck-api.onrender.com/api/v1/vehicules/', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(nouveauVehicule)
@@ -201,7 +201,7 @@ function App() {
       if (photoVehicule) {
         const formData = new FormData();
         formData.append('file', photoVehicule);
-        await fetch(`http://10.161.110.232:8000/token/api/v1/vehicules/${vehiculeCree.id}/upload_photo`, {
+        await fetch(`https://kincheck-api.onrender.com/api/v1/vehicules/${vehiculeCree.id}/upload_photo`, {
           method: 'POST',
           body: formData
         });
@@ -225,7 +225,7 @@ function App() {
     }
 
     try {
-      const reponse = await fetch('http://10.161.110.232:8000/token/api/v1/users/', {
+      const reponse = await fetch('https://kincheck-api.onrender.com/api/v1/users/', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -242,7 +242,7 @@ function App() {
       if (fichierPhoto) {
         const formData = new FormData();
         formData.append('file', fichierPhoto);
-        await fetch(`http://10.161.110.232:8000/token/api/v1/users/${agentCree.id}/upload_photo`, {
+        await fetch(`https://kincheck-api.onrender.com/api/v1/users/${agentCree.id}/upload_photo`, {
           method: 'POST',
           body: formData
         });
@@ -265,7 +265,7 @@ function App() {
 
     if (window.confirm(`Voulez-vous supprimer l'agent ${username} ?`)) {
       try {
-        const res = await fetch(`http://10.161.110.232:8000/token/api/v1/users/${id}`, { method: 'DELETE' });
+        const res = await fetch(`https://kincheck-api.onrender.com/api/v1/users/${id}`, { method: 'DELETE' });
         if (!res.ok) throw new Error((await res.json()).detail);
         chargerDonneesAdmin();
       } catch (err) {

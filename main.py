@@ -12,7 +12,7 @@ from groq import Groq
 import models, schemas, auth
 from database import engine, get_db
 
-# Clé API Groq
+# Clé API Groq (récupérée via les variables d'environnement sur Render)
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
 groq_client = Groq(api_key=GROQ_API_KEY)
 
@@ -22,7 +22,7 @@ models.Base.metadata.create_all(bind=engine)
 app = FastAPI(title="Kin-Check API", version="1.0.0")
 app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
 
-# --- CORRECTION CORS (Autorise l'APK Mobile & Render) ---
+# --- CORRECTION CORS (Correction de allow_headers) ---
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -31,11 +31,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# --- INITIALISATION SUPER ADMIN (Indentation corrigée) ---
 def init_super_admin():
     db: Session = next(get_db())
     admin = db.query(models.User).filter(models.User.username == "admin@kincheck.cd").first()
+    hashed_pwd = auth.get_password_hash("Admin1234!")
     if not admin:
-        hashed_pwd = auth.get_password_hash("Admin1234!")
         super_admin = models.User(
             username="admin@kincheck.cd",
             hashed_password=hashed_pwd,
@@ -44,7 +45,9 @@ def init_super_admin():
             photo_url=None
         )
         db.add(super_admin)
-        db.commit()
+    else: 
+        admin.hashed_password = hashed_pwd
+    db.commit()
 
 @app.on_event("startup")
 def startup_event():
