@@ -54,10 +54,14 @@ def startup_event():
     init_super_admin()
 
 # --- AUTHENTIFICATION ---
+# --- AUTHENTIFICATION ---
 @app.post("/token", response_model=schemas.Token, tags=["Authentification"])
-def login(form_data: schemas.UserCreate, db: Session = Depends(get_db)):
-    user = db.query(models.User).filter(models.User.username == form_data.username).first()
-    if not user or not auth.verify_password(form_data.password, user.hashed_password):
+def login(form_data: dict, db: Session = Depends(get_db)):
+    username = form_data.get("username")
+    password = form_data.get("password")
+
+    user = db.query(models.User).filter(models.User.username == username).first()
+    if not user or not auth.verify_password(password, user.hashed_password):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Identifiants incorrects",
