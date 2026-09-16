@@ -170,27 +170,46 @@ async def analyser_plaque_avec_groq(file: UploadFile = File(...)):
         contents = await file.read()
         base64_image = base64.b64encode(contents).decode('utf-8')
         
-        response = groq_client.chat.completions.create(
-            model="llama-3.2-11b-vision-instruct",
-            messages=[
-                {
-                    "role": "user",
-                    "content": [
+        # Modèles vision valides sur Groq
+        modeles_vision = [
+            "llama-3.2-11b-vision-preview",
+            "llama-3.2-90b-vision-preview"
+        ]
+        
+        response = None
+        dernier_erreur = None
+
+        for model_name in modeles_vision:
+            try:
+                response = groq_client.chat.completions.create(
+                    model=model_name,
+                    messages=[
                         {
-                            "type": "text", 
-                            "text": 'Analyse cette image de véhicule. Extrais uniquement le numéro de la plaque d\'immatriculation. Réponds strictly au format JSON : {"plaque": "1234AB01"}.'
-                        },
-                        {
-                            "type": "image_url",
-                            "image_url": {
-                                "url": f"data:image/jpeg;base64,{base64_image}"
-                            }
+                            "role": "user",
+                            "content": [
+                                {
+                                    "type": "text", 
+                                    "text": 'Analyse cette image de véhicule. Extrais uniquement le numéro de la plaque d\'immatriculation. Réponds strictly au format JSON : {"plaque": "1234AB01"}.'
+                                },
+                                {
+                                    "type": "image_url",
+                                    "image_url": {
+                                        "url": f"data:image/jpeg;base64,{base64_image}"
+                                    }
+                                }
+                            ]
                         }
-                    ]
-                }
-            ],
-            response_format={"type": "json_object"}
-        )
+                    ],
+                    response_format={"type": "json_object"}
+                )
+                if response:
+                    break
+            except Exception as e_model:
+                dernier_erreur = e_model
+                continue
+        
+        if not response:
+            raise HTTPException(status_code=400, detail=f"Aucun modèle Vision disponible : {str(dernier_erreur)}")
         
         resultat_json = json.loads(response.choices[0].message.content)
         return {"plaque": resultat_json.get("plaque", "")}
