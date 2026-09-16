@@ -57,10 +57,11 @@ def startup_event():
 # --- AUTHENTIFICATION ---
 @app.post("/token", response_model=schemas.Token, tags=["Authentification"])
 def login(form_data: dict, db: Session = Depends(get_db)):
-    username = form_data.get("username")
-    password = form_data.get("password")
+    username = form_data.get("username", "").strip()
+    password = form_data.get("password", "").strip()
 
     user = db.query(models.User).filter(models.User.username == username).first()
+    
     if not user or not auth.verify_password(password, user.hashed_password):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -69,7 +70,6 @@ def login(form_data: dict, db: Session = Depends(get_db)):
         )
     access_token = auth.create_access_token(data={"sub": user.username, "role": user.role})
     return {"access_token": access_token, "token_type": "bearer", "role": user.role}
-
 # --- AGENTS ---
 @app.post("/api/v1/users/", response_model=schemas.UserResponse, tags=["Administration"])
 def enregistrer_agent(user_data: schemas.UserCreate, db: Session = Depends(get_db)):
