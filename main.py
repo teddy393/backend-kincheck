@@ -170,10 +170,10 @@ async def analyser_plaque_avec_groq(file: UploadFile = File(...)):
         contents = await file.read()
         base64_image = base64.b64encode(contents).decode('utf-8')
         
-        # Modèles vision valides sur Groq
+        # Modèles Vision actifs chez Groq
         modeles_vision = [
-            "llama-3.2-11b-vision-preview",
-            "llama-3.2-90b-vision-preview"
+            "qwen/qwen3.6-27b",
+            "qwen/qwen3.8-27b"
         ]
         
         response = None
