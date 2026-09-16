@@ -171,7 +171,7 @@ async def analyser_plaque_avec_groq(file: UploadFile = File(...)):
         base64_image = base64.b64encode(contents).decode('utf-8')
         
         response = groq_client.chat.completions.create(
-            model="llama-3.2-90b-vision-preview",
+            model="llama-3.2-11b-vision-instruct",
             messages=[
                 {
                     "role": "user",
