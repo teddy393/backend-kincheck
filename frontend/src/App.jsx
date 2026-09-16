@@ -25,7 +25,7 @@ const API_URL = "https://kincheck-api.onrender.com";
 
 function App() {
   const [user, setUser] = useState(null);
-  const [activeTab, setActiveTab] = useState('home'); // 'home', 'scan', 'menu', 'history'
+  const [activeTab, setActiveTab] = useState('home');
 
   const [loginForm, setLoginForm] = useState({ username: '', password: '' });
   const [loginErreur, setLoginErreur] = useState('');
@@ -46,8 +46,7 @@ function App() {
   const [listeUsers, setListeUsers] = useState([]);
   const [listeHistorique, setListeHistorique] = useState([]);
 
-  // Sous-vues dans le Menu
-  const [menuView, setMenuView] = useState('main'); // 'main', 'create_agent', 'users_list'
+  const [menuView, setMenuView] = useState('main');
 
   const genererMotDePasse = () => {
     const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$%!";
@@ -76,7 +75,7 @@ function App() {
         throw new Error(errData.detail || "Identifiants incorrects.");
       }
       const data = await reponse.json();
-      setUser({ token: data.access_token, role: data.role, username: loginForm.username });
+      setUser({ token: data.access_token, role: data.role, username: loginForm.username.trim() });
       setActiveTab('home');
     } catch (err) {
       setLoginErreur(err.message);
@@ -101,6 +100,7 @@ function App() {
     }
   }, [user]);
 
+  // RECHERCHE VÉHICULE + RECHARGEMENT AUTOMATIQUE DE L'HISTORIQUE
   const rechercherVehicule = async (e) => {
     e.preventDefault();
     setErreur('');
@@ -115,41 +115,67 @@ function App() {
     } catch (err) {
       setErreur(err.message);
     } finally {
-      if (user && user.role === 'super_admin') chargerDonneesAdmin();
+      // Recharger l'historique immédiatement après chaque vérification
+      chargerDonneesAdmin();
     }
   };
-
+  // CAPTURE PHOTO EN BASE64 ET ENVOI IA GROQ
   const prendrePhotoIA = async () => {
     try {
+      setErreur('');
+
+      const checkPermission = await CapCamera.requestPermissions();
+      if (checkPermission.camera !== 'granted') {
+        throw new Error("L'accès à la caméra a été refusé.");
+      }
+
+      // Compression de l'image (Quality 60 + Max 1024px)
       const image = await CapCamera.getPhoto({
-        quality: 90,
+        quality: 60,
+        width: 1024,
         allowEditing: false,
-        resultType: CameraResultType.Uri,
+        resultType: CameraResultType.Base64,
         source: CameraSource.Camera
       });
 
-      const response = await fetch(image.webPath);
-      const blob = await response.blob();
-      const formData = new FormData();
-      formData.append('file', blob, "plaque.jpg");
+      if (!image || !image.base64String) {
+        throw new Error("Aucune image capturée.");
+      }
 
-      setErreur('');
+      const byteCharacters = atob(image.base64String);
+      const byteNumbers = new Array(byteCharacters.length);
+      for (let i = 0; i < byteCharacters.length; i++) {
+        byteNumbers[i] = byteCharacters.charCodeAt(i);
+      }
+      const byteArray = new Uint8Array(byteNumbers);
+      const blob = new Blob([byteArray], { type: 'image/jpeg' });
+
+      const formData = new FormData();
+      formData.append('file', blob, 'plaque.jpg');
+
+      // Envoi au backend
       const res = await fetch(`${API_URL}/api/v1/ia/analyser-plaque`, {
         method: 'POST',
         body: formData
       });
-      if (!res.ok) throw new Error("Erreur analyse IA.");
+
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.detail || `Erreur serveur (${res.status})`);
+      }
+
       const data = await res.json();
       if (data.plaque) {
         setPlaque(data.plaque.toUpperCase().replace(/\s+/g, ''));
       } else {
-        setErreur("Aucune plaque lisible détectée.");
+        setErreur("Aucune plaque lisible n'a été détectée.");
       }
+
     } catch (err) {
-      setErreur("Echec de la prise de photo.");
+      console.error("Erreur Caméra :", err);
+      setErreur(err.message || "Impossible de traiter la photo.");
     }
   };
-
   const enregistrerVehicule = async (e) => {
     e.preventDefault();
     setVehiculeMsg('');
@@ -177,13 +203,13 @@ function App() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          username: nouvelAgent.username,
-          password: nouvelAgent.password,
-          nom_complet: nouvelAgent.nom_complet,
+          username: nouvelAgent.username.trim(),
+          password: nouvelAgent.password.trim(),
+          nom_complet: nouvelAgent.nom_complet.trim(),
           role: nouvelAgent.role
         })
       });
-      if (!reponse.ok) throw new Error("Erreur lors de la création.");
+      if (!reponse.ok) throw new Error("Erreur de création.");
 
       setAgentMsg(`✅ Agent créé ! Mot de passe : ${nouvelAgent.password}`);
       setNouvelAgent({ username: '', password: '', nom_complet: '', role: 'agent_terrain' });
@@ -279,7 +305,7 @@ function App() {
     })
   };
 
-  // --- 1. FENÊTRE DE CONNEXION (CENTRÉE VERTICALEMENT) ---
+  // 1. FENÊTRE DE CONNEXION CENTRÉE
   if (!user) {
     return (
       <div style={styles.appBg}>
@@ -326,32 +352,28 @@ function App() {
     );
   }
 
-  // --- MAIN APP WITH NAVIGATION BAR ---
   return (
     <div style={styles.appBg}>
       
-      {/* HEADER DU HAUT (COMMUN À TOUTES LES PAGES) */}
+      {/* HEADER HAUT */}
       <div style={{ padding: '16px', background: '#0b1329', borderBottom: '1px solid rgba(255,255,255,0.1)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
           <ShieldCheck size={28} color="#3b82f6" />
           <span style={{ fontSize: '20px', fontWeight: '800' }}>Kin-Check</span>
         </div>
-        <button 
-          onClick={() => setUser(null)}
-          style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer' }}
-        >
+        <button onClick={() => setUser(null)} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer' }}>
           <LogOut size={22} />
         </button>
       </div>
 
-      {/* CONTENU VARIABLE SELON L'ONGLET SÉLECTIONNÉ */}
+      {/* CONTENU NAVIGATION */}
       <div style={{ flex: 1, padding: '16px', paddingBottom: '80px', overflowY: 'auto' }}>
         
-        {/* II. FENÊTRE ACCUEIL / TABLEAU DE BORD */}
+        {/* ACCUEIL */}
         {activeTab === 'home' && (
           <div>
             <div style={{ ...styles.card, maxWidth: '100%', marginBottom: '16px' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '12px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
                 <User size={32} color="#60a5fa" />
                 <div>
                   <h3 style={{ margin: 0, fontSize: '18px' }}>Session Active</h3>
@@ -361,27 +383,29 @@ function App() {
             </div>
 
             <div style={{ ...styles.card, maxWidth: '100%' }}>
-              <h3 style={{ margin: '0 0 12px 0', fontSize: '16px', color: '#60a5fa' }}>Raccourcis Rapides</h3>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+              <h3 style={{ margin: '0 0 12px 0', fontSize: '16px', color: '#60a5fa' }}>Accès Rapides</h3>
+              <div style={{ display: 'grid', gridTemplateColumns: user.role === 'agent_terrain' ? '1fr' : '1fr 1fr', gap: '12px' }}>
                 <button onClick={() => setActiveTab('scan')} style={{ ...styles.buttonPrimary, fontSize: '14px', padding: '12px' }}>
-                  <Search size={18} /> Contrôle
+                  <Search size={18} /> Contrôle Routier
                 </button>
-                <button onClick={() => setActiveTab('menu')} style={{ ...styles.buttonPrimary, background: 'rgba(255,255,255,0.1)', border: '1px solid rgba(255,255,255,0.2)', fontSize: '14px', padding: '12px' }}>
-                  <Menu size={18} /> Menu
-                </button>
+                {user.role !== 'agent_terrain' && (
+                  <button onClick={() => setActiveTab('menu')} style={{ ...styles.buttonPrimary, background: 'rgba(255,255,255,0.1)', border: '1px solid rgba(255,255,255,0.2)', fontSize: '14px', padding: '12px' }}>
+                    <Menu size={18} /> Menu Gestion
+                  </button>
+                )}
               </div>
             </div>
           </div>
         )}
 
-        {/* FENÊTRE CONTRÔLE / SCANNER */}
+        {/* CONTRÔLE ROUTIER */}
         {activeTab === 'scan' && (
           <div style={{ ...styles.card, maxWidth: '100%' }}>
             <h3 style={{ margin: '0 0 16px 0', fontSize: '18px', color: '#60a5fa' }}>Contrôle de Plaque</h3>
             <form onSubmit={rechercherVehicule}>
               <input 
                 type="text" 
-                placeholder="Numéro de Plaque (1234AB01)"
+                placeholder="Plaque (ex: 1234AB01)"
                 value={plaque}
                 onChange={(e) => setPlaque(e.target.value)}
                 style={styles.input}
@@ -408,8 +432,8 @@ function App() {
           </div>
         )}
 
-        {/* III. FENÊTRE MENU (PARAMÈTRES ET OPTIONS DU SUPER ADMIN) */}
-        {activeTab === 'menu' && (
+        {/* MENU ADMIN & DGI (MASQUÉ POUR L'AGENT DE TERRAIN) */}
+        {activeTab === 'menu' && user.role !== 'agent_terrain' && (
           <div>
             {menuView === 'main' && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
@@ -419,20 +443,19 @@ function App() {
                       <UserPlus size={22} /> Créer un Compte Agent
                     </button>
                     <button onClick={() => setMenuView('users_list')} style={{ ...styles.buttonPrimary, background: 'rgba(167, 139, 250, 0.2)', border: '1px solid #a78bfa', color: '#a78bfa', justifyContent: 'flex-start', padding: '16px' }}>
-                      <Users size={22} /> Gérer la Liste des Agents
+                      <Users size={22} /> Gérer les Agents
                     </button>
                   </>
                 )}
 
                 {(user.role === 'admin_dgi' || user.role === 'super_admin') && (
                   <button onClick={() => setMenuView('add_car')} style={{ ...styles.buttonPrimary, background: 'rgba(56, 189, 248, 0.2)', border: '1px solid #38bdf8', color: '#38bdf8', justifyContent: 'flex-start', padding: '16px' }}>
-                    <PlusCircle size={22} /> Immatriculer un Véhicule (DGI)
+                    <PlusCircle size={22} /> Immatriculer un Engin (DGI)
                   </button>
                 )}
               </div>
             )}
 
-            {/* SOUS-FENÊTRE : CRÉER UN AGENT */}
             {menuView === 'create_agent' && (
               <div style={{ ...styles.card, maxWidth: '100%' }}>
                 <button onClick={() => setMenuView('main')} style={{ background: 'none', border: 'none', color: '#94a3b8', marginBottom: '12px', cursor: 'pointer' }}>← Retour au Menu</button>
@@ -458,7 +481,6 @@ function App() {
               </div>
             )}
 
-            {/* SOUS-FENÊTRE : LISTE DES AGENTS */}
             {menuView === 'users_list' && (
               <div style={{ ...styles.card, maxWidth: '100%' }}>
                 <button onClick={() => setMenuView('main')} style={{ background: 'none', border: 'none', color: '#94a3b8', marginBottom: '12px', cursor: 'pointer' }}>← Retour au Menu</button>
@@ -477,21 +499,20 @@ function App() {
               </div>
             )}
 
-            {/* SOUS-FENÊTRE : IMMATRICULATION DGI */}
             {menuView === 'add_car' && (
               <div style={{ ...styles.card, maxWidth: '100%' }}>
                 <button onClick={() => setMenuView('main')} style={{ background: 'none', border: 'none', color: '#94a3b8', marginBottom: '12px', cursor: 'pointer' }}>← Retour au Menu</button>
-                <h3 style={{ margin: '0 0 16px 0', color: '#38bdf8' }}>Immatriculer un Véhicule</h3>
+                <h3 style={{ margin: '0 0 16px 0', color: '#38bdf8' }}>Immatriculer un Engin</h3>
                 <form onSubmit={enregistrerVehicule}>
                   <input type="text" placeholder="Plaque (ex: 1234AB01)" required value={nouveauVehicule.plaque} onChange={(e) => setNouveauVehicule({ ...nouveauVehicule, plaque: e.target.value })} style={styles.input} />
-                  <input type="text" placeholder="Marque & Modèle" required value={nouveauVehicule.marque} onChange={(e) => setNouveauVehicule({ ...nouveauVehicule, marque: e.target.value })} style={styles.input} />
+                  <input type="text" placeholder="Marque & Modèle (Voiture, Moto, Bajaj)" required value={nouveauVehicule.marque} onChange={(e) => setNouveauVehicule({ ...nouveauVehicule, marque: e.target.value })} style={styles.input} />
                   <input type="text" placeholder="Couleur" required value={nouveauVehicule.couleur} onChange={(e) => setNouveauVehicule({ ...nouveauVehicule, couleur: e.target.value })} style={styles.input} />
                   <input type="text" placeholder="Nom du Propriétaire" required value={nouveauVehicule.proprietaire} onChange={(e) => setNouveauVehicule({ ...nouveauVehicule, proprietaire: e.target.value })} style={styles.input} />
                   <select value={nouveauVehicule.est_en_regle ? "true" : "false"} onChange={(e) => setNouveauVehicule({ ...nouveauVehicule, est_en_regle: e.target.value === "true" })} style={styles.input}>
                     <option value="true" style={{ background: '#0b1329' }}>✅ En Règle (Taxes Payées)</option>
                     <option value="false" style={{ background: '#0b1329' }}>❌ En Infraction</option>
                   </select>
-                  <button type="submit" style={{ ...styles.buttonPrimary, background: '#0284c7' }}>Enregistrer</button>
+                  <button type="submit" style={{ ...styles.buttonPrimary, background: '#0284c7' }}>Enregistrer l'engin</button>
                 </form>
                 {vehiculeMsg && <p style={{ marginTop: '12px' }}>{vehiculeMsg}</p>}
               </div>
@@ -499,25 +520,36 @@ function App() {
           </div>
         )}
 
-        {/* FENÊTRE HISTORIQUE DES CONTRÔLES */}
+       {/* HISTORIQUE DES CONTRÔLES DYNAMIQUE */}
         {activeTab === 'history' && (
           <div style={{ ...styles.card, maxWidth: '100%' }}>
-            <h3 style={{ margin: '0 0 16px 0', color: '#4ade80' }}>Historique des Contrôles</h3>
-            {listeHistorique.map(h => (
-              <div key={h.id} style={{ padding: '10px 0', borderBottom: '1px solid rgba(255,255,255,0.1)', fontSize: '14px' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                  <strong>{h.plaque_recherchee}</strong>
-                  <span style={{ color: h.est_en_regle ? '#4ade80' : '#f87171' }}>{h.est_en_regle ? "Règle" : "Infraction"}</span>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+              <h3 style={{ margin: 0, color: '#4ade80' }}>Historique des Contrôles</h3>
+              <button 
+                onClick={chargerDonneesAdmin}
+                style={{ background: 'rgba(59, 130, 246, 0.2)', border: '1px solid #3b82f6', color: '#60a5fa', padding: '6px 12px', borderRadius: '8px', cursor: 'pointer', fontSize: '12px' }}
+              >
+                🔄 Actualiser
+              </button>
+            </div>
+            
+            {listeHistorique.length === 0 ? (
+              <p style={{ color: '#94a3b8', fontSize: '14px' }}>Aucun contrôle enregistré pour le moment.</p>
+            ) : (
+              listeHistorique.map(h => (
+                <div key={h.id} style={{ padding: '10px 0', borderBottom: '1px solid rgba(255,255,255,0.1)', fontSize: '14px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                    <strong>{h.plaque_recherchee}</strong>
+                    <span style={{ color: h.est_en_regle ? '#4ade80' : '#f87171' }}>{h.est_en_regle ? "Règle" : "Infraction"}</span>
+                  </div>
+                  <div style={{ fontSize: '12px', color: '#94a3b8' }}>Agent : {h.agent_username}</div>
                 </div>
-                <div style={{ fontSize: '12px', color: '#94a3b8' }}>Agent : {h.agent_username} | {new Date(h.date_controle).toLocaleDateString()}</div>
-              </div>
-            ))}
+              ))
+            )}
           </div>
         )}
-
-      </div>
-
-      {/* BARRE DE NAVIGATION INFÉRIEURE (4 OPTIONS DU BAS) */}
+      </div>  
+      {/* BARRE DU BAS DYNAMIQUE (LE MENU DISPARAÎT SI AGENT TERRAIN) */}
       <div style={styles.bottomBar}>
         <button onClick={() => setActiveTab('home')} style={styles.navItem(activeTab === 'home')}>
           <Home size={22} />
@@ -529,10 +561,12 @@ function App() {
           <span>Contrôle</span>
         </button>
 
-        <button onClick={() => { setActiveTab('menu'); setMenuView('main'); }} style={styles.navItem(activeTab === 'menu')}>
-          <Menu size={22} />
-          <span>Menu</span>
-        </button>
+        {user.role !== 'agent_terrain' && (
+          <button onClick={() => { setActiveTab('menu'); setMenuView('main'); }} style={styles.navItem(activeTab === 'menu')}>
+            <Menu size={22} />
+            <span>Menu</span>
+          </button>
+        )}
 
         <button onClick={() => setActiveTab('history')} style={styles.navItem(activeTab === 'history')}>
           <History size={22} />
