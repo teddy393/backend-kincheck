@@ -281,6 +281,7 @@ def lister_historique(db: Session = Depends(get_db)):
     return db.query(models.HistoriqueControle).order_by(models.HistoriqueControle.date_controle.desc()).all()
 
 # --- MODULE IA VISION (GROQ) ---
+# --- MODULE IA VISION (GROQ) OPTIMISÉ TOKENS ---
 @app.post("/api/v1/ia/analyser-plaque", tags=["IA & Vision Groq"])
 async def analyser_plaque_avec_groq(file: UploadFile = File(...)):
     try:
@@ -316,7 +317,8 @@ async def analyser_plaque_avec_groq(file: UploadFile = File(...)):
                             ]
                         }
                     ],
-                    response_format={"type": "json_object"}
+                    response_format={"type": "json_object"},
+                    max_tokens=30  # <-- RESTRICTION DES TOKENS POUR ÉVITER L'ERREUR 429
                 )
                 if response:
                     break

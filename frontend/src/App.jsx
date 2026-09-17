@@ -7,18 +7,18 @@ import {
   Users, 
   History, 
   LogOut, 
-  CheckCircle2, 
-  XCircle, 
   Trash2, 
   Car,
   Camera,
   AlertCircle,
   Wand2,
-  FileText,
   Home,
   Menu,
   PlusCircle,
-  User
+  User,
+  FileSpreadsheet,
+  ChevronDown,
+  Check
 } from 'lucide-react';
 
 const API_URL = "https://kincheck-api.onrender.com";
@@ -35,7 +35,7 @@ function App() {
   const [erreur, setErreur] = useState('');
 
   const [nouveauVehicule, setNouveauVehicule] = useState({
-    plaque: '', marque: '', couleur: '', proprietaire: '', est_en_regle: true
+    plaque: '', marque: '', couleur: '', proprietaire: '', type_engin: 'Voiture', annee_derniere_vignette: 2024, est_en_regle: true
   });
   const [vehiculeMsg, setVehiculeMsg] = useState('');
 
@@ -43,10 +43,15 @@ function App() {
     username: '', password: '', nom_complet: '', role: 'agent_terrain' 
   });
   const [agentMsg, setAgentMsg] = useState('');
+  const [csvFile, setCsvFile] = useState(null);
+  const [csvMsg, setCsvMsg] = useState('');
+
   const [listeUsers, setListeUsers] = useState([]);
   const [listeHistorique, setListeHistorique] = useState([]);
-
   const [menuView, setMenuView] = useState('main');
+
+  // ÉTATS DES SÉLECTEURS SUR-MESURE (REMPLACE LES SELECT NATIVE)
+  const [openSelect, setOpenSelect] = useState(null); // 'role', 'type_engin', 'vignette', 'statut'
 
   const genererMotDePasse = () => {
     const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$%!";
@@ -95,12 +100,11 @@ function App() {
   };
 
   useEffect(() => {
-    if (user && user.role === 'super_admin') {
+    if (user && (user.role === 'super_admin' || user.role === 'admin_dgi')) {
       chargerDonneesAdmin();
     }
   }, [user]);
 
-  // RECHERCHE VÉHICULE + RECHARGEMENT AUTOMATIQUE DE L'HISTORIQUE
   const rechercherVehicule = async (e) => {
     e.preventDefault();
     setErreur('');
@@ -110,26 +114,24 @@ function App() {
 
     try {
       const reponse = await fetch(`${API_URL}/api/v1/vehicules/${encodeURIComponent(plaqueClean)}?agent_username=${user.username}`);
-      if (!reponse.ok) throw new Error("Plaque introuvable ou véhicule non enregistré.");
-      setResultat(await reponse.json());
+      const data = await reponse.json();
+      if (!reponse.ok) throw new Error(data.detail || "Plaque introuvable ou invalide.");
+      setResultat(data);
     } catch (err) {
       setErreur(err.message);
     } finally {
-      // Recharger l'historique immédiatement après chaque vérification
       chargerDonneesAdmin();
     }
   };
-  // CAPTURE PHOTO EN BASE64 ET ENVOI IA GROQ
+
   const prendrePhotoIA = async () => {
     try {
       setErreur('');
-
       const checkPermission = await CapCamera.requestPermissions();
       if (checkPermission.camera !== 'granted') {
         throw new Error("L'accès à la caméra a été refusé.");
       }
 
-      // Compression de l'image (Quality 60 + Max 1024px)
       const image = await CapCamera.getPhoto({
         quality: 60,
         width: 1024,
@@ -138,9 +140,7 @@ function App() {
         source: CameraSource.Camera
       });
 
-      if (!image || !image.base64String) {
-        throw new Error("Aucune image capturée.");
-      }
+      if (!image || !image.base64String) throw new Error("Aucune image capturée.");
 
       const byteCharacters = atob(image.base64String);
       const byteNumbers = new Array(byteCharacters.length);
@@ -153,7 +153,6 @@ function App() {
       const formData = new FormData();
       formData.append('file', blob, 'plaque.jpg');
 
-      // Envoi au backend
       const res = await fetch(`${API_URL}/api/v1/ia/analyser-plaque`, {
         method: 'POST',
         body: formData
@@ -161,7 +160,7 @@ function App() {
 
       if (!res.ok) {
         const errData = await res.json().catch(() => ({}));
-        throw new Error(errData.detail || `Erreur serveur (${res.status})`);
+        throw new Error(errData.detail || `Erreur d'analyse IA (${res.status})`);
       }
 
       const data = await res.json();
@@ -170,12 +169,12 @@ function App() {
       } else {
         setErreur("Aucune plaque lisible n'a été détectée.");
       }
-
     } catch (err) {
       console.error("Erreur Caméra :", err);
       setErreur(err.message || "Impossible de traiter la photo.");
     }
   };
+
   const enregistrerVehicule = async (e) => {
     e.preventDefault();
     setVehiculeMsg('');
@@ -185,12 +184,36 @@ function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(nouveauVehicule)
       });
-      if (!reponse.ok) throw new Error("Erreur d'enregistrement.");
+      const data = await reponse.json();
+      if (!reponse.ok) throw new Error(data.detail || "Erreur d'enregistrement.");
 
-      setVehiculeMsg(`✅ Véhicule ${nouveauVehicule.plaque} enregistré !`);
-      setNouveauVehicule({ plaque: '', marque: '', couleur: '', proprietaire: '', est_en_regle: true });
+      setVehiculeMsg(`✅ Engin ${data.plaque} enregistré avec succès !`);
+      setNouveauVehicule({ plaque: '', marque: '', couleur: '', proprietaire: '', type_engin: 'Voiture', annee_derniere_vignette: 2024, est_en_regle: true });
     } catch (err) {
       setVehiculeMsg(`❌ ${err.message}`);
+    }
+  };
+
+  const importerCSV = async (e) => {
+    e.preventDefault();
+    if (!csvFile) return setCsvMsg("❌ Sélectionnez un fichier .CSV");
+    setCsvMsg("⏳ Importation en cours...");
+
+    const formData = new FormData();
+    formData.append("file", csvFile);
+
+    try {
+      const reponse = await fetch(`${API_URL}/api/v1/vehicules/import_csv`, {
+        method: 'POST',
+        body: formData
+      });
+      const data = await reponse.json();
+      if (!reponse.ok) throw new Error(data.detail || "Échec de l'importation.");
+      
+      setCsvMsg(`✅ ${data.vehicules_ajoutes} engins ajoutés (${data.doublons_ignores} doublons ignorés).`);
+      setCsvFile(null);
+    } catch (err) {
+      setCsvMsg(`❌ ${err.message}`);
     }
   };
 
@@ -246,11 +269,12 @@ function App() {
     card: {
       width: '100%',
       maxWidth: '400px',
-      background: 'rgba(23, 37, 72, 0.75)',
+      background: 'rgba(23, 37, 72, 0.85)',
       borderRadius: '20px',
       padding: '24px',
       border: '1px solid rgba(255, 255, 255, 0.12)',
-      boxShadow: '0 10px 30px rgba(0,0,0,0.4)'
+      boxShadow: '0 10px 30px rgba(0,0,0,0.4)',
+      boxSizing: 'border-box'
     },
     input: {
       width: '100%',
@@ -259,10 +283,44 @@ function App() {
       border: '1px solid rgba(255, 255, 255, 0.2)',
       background: 'rgba(11, 19, 41, 0.9)',
       color: '#fff',
-      fontSize: '16px',
+      fontSize: '15px',
       boxSizing: 'border-box',
       marginBottom: '14px'
     },
+    customDropdownHeader: {
+      width: '100%',
+      padding: '14px 16px',
+      borderRadius: '12px',
+      border: '1px solid rgba(255, 255, 255, 0.25)',
+      background: '#0d1836',
+      color: '#fff',
+      fontSize: '15px',
+      display: 'flex',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      cursor: 'pointer',
+      marginBottom: '6px',
+      boxSizing: 'border-box'
+    },
+    customDropdownList: {
+      background: '#0a1228',
+      borderRadius: '12px',
+      border: '1px solid rgba(59, 130, 246, 0.4)',
+      overflow: 'hidden',
+      marginBottom: '14px',
+      boxShadow: '0 8px 20px rgba(0,0,0,0.5)'
+    },
+    customDropdownOption: (selected) => ({
+      padding: '12px 16px',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      fontSize: '14px',
+      cursor: 'pointer',
+      background: selected ? 'rgba(37, 99, 235, 0.3)' : 'transparent',
+      color: selected ? '#60a5fa' : '#e2e8f0',
+      borderBottom: '1px solid rgba(255,255,255,0.05)'
+    }),
     buttonPrimary: {
       width: '100%',
       padding: '14px',
@@ -305,7 +363,7 @@ function App() {
     })
   };
 
-  // 1. FENÊTRE DE CONNEXION CENTRÉE
+  // 1. FENÊTRE DE CONNEXION
   if (!user) {
     return (
       <div style={styles.appBg}>
@@ -316,7 +374,7 @@ function App() {
                 <ShieldCheck size={48} />
               </div>
               <h1 style={{ fontSize: '26px', fontWeight: '800', margin: 0 }}>Kin-Check</h1>
-              <p style={{ color: '#94a3b8', fontSize: '14px', marginTop: '4px' }}>APDNK Security Portal</p>
+              <p style={{ color: '#94a3b8', fontSize: '14px', marginTop: '4px' }}>Solution APDNK & Régies Financières</p>
             </div>
 
             <form onSubmit={handleLogin}>
@@ -377,7 +435,7 @@ function App() {
                 <User size={32} color="#60a5fa" />
                 <div>
                   <h3 style={{ margin: 0, fontSize: '18px' }}>Session Active</h3>
-                  <p style={{ margin: 0, color: '#94a3b8', fontSize: '14px' }}>{user.username} ({user.role})</p>
+                  <p style={{ margin: 0, color: '#94a3b8', fontSize: '14px' }}>{user.username} ({user.role === 'super_admin' ? 'Super Admin' : user.role === 'admin_dgi' ? 'Agent DGI' : 'Agent de Terrain'})</p>
                 </div>
               </div>
             </div>
@@ -401,11 +459,11 @@ function App() {
         {/* CONTRÔLE ROUTIER */}
         {activeTab === 'scan' && (
           <div style={{ ...styles.card, maxWidth: '100%' }}>
-            <h3 style={{ margin: '0 0 16px 0', fontSize: '18px', color: '#60a5fa' }}>Contrôle de Plaque</h3>
+            <h3 style={{ margin: '0 0 16px 0', fontSize: '18px', color: '#60a5fa' }}>Contrôle de Plaque RDC</h3>
             <form onSubmit={rechercherVehicule}>
               <input 
                 type="text" 
-                placeholder="Plaque (ex: 1234AB01)"
+                placeholder="Plaque (ex: 1234AB01, MC1234AB)"
                 value={plaque}
                 onChange={(e) => setPlaque(e.target.value)}
                 style={styles.input}
@@ -423,16 +481,25 @@ function App() {
             {resultat && (
               <div style={{ marginTop: '20px', padding: '16px', borderRadius: '12px', background: resultat.est_en_regle ? 'rgba(34, 197, 94, 0.2)' : 'rgba(239, 68, 68, 0.2)', border: `1px solid ${resultat.est_en_regle ? '#22c55e' : '#ef4444'}` }}>
                 <h2 style={{ margin: '0 0 8px 0' }}>{resultat.plaque}</h2>
-                <p style={{ margin: '4px 0' }}><strong>Statut:</strong> {resultat.est_en_regle ? "✅ EN RÈGLE" : "❌ EN INFRACTION"}</p>
-                <p style={{ margin: '4px 0' }}><strong>Marque:</strong> {resultat.marque}</p>
-                <p style={{ margin: '4px 0' }}><strong>Propriétaire:</strong> {resultat.proprietaire}</p>
+                <p style={{ margin: '4px 0' }}><strong>Statut:</strong> {resultat.est_en_regle ? "✅ EN RÈGLE (Vignette Ajour)" : "❌ EN INFRACTION"}</p>
+                {resultat.marque && <p style={{ margin: '4px 0' }}><strong>Engin / Marque:</strong> {resultat.type_engin} - {resultat.marque}</p>}
+                {resultat.proprietaire && <p style={{ margin: '4px 0' }}><strong>Propriétaire:</strong> {resultat.proprietaire}</p>}
+                
+                {resultat.calcul_fiscal && !resultat.est_en_regle && (
+                  <div style={{ marginTop: '12px', paddingTop: '12px', borderTop: '1px dashed rgba(255,255,255,0.2)', fontSize: '14px' }}>
+                    <p style={{ margin: '2px 0', color: '#f87171' }}><strong>Arriérés :</strong> {resultat.calcul_fiscal.annees_retard} An(s) de retard</p>
+                    <p style={{ margin: '2px 0' }}><strong>Vignette Duge :</strong> {resultat.calcul_fiscal.montant_vignette_du?.toLocaleString()} CDF</p>
+                    <p style={{ margin: '2px 0' }}><strong>Amende Forfaitaire :</strong> {resultat.calcul_fiscal.amende_forfaitaire?.toLocaleString()} CDF</p>
+                    <h3 style={{ margin: '8px 0 0 0', color: '#ef4444' }}>TOTAL À RECOUVRIR : {resultat.calcul_fiscal.total_a_payer?.toLocaleString()} CDF</h3>
+                  </div>
+                )}
               </div>
             )}
             {erreur && <p style={{ color: '#ef4444', marginTop: '12px' }}>{erreur}</p>}
           </div>
         )}
 
-        {/* MENU ADMIN & DGI (MASQUÉ POUR L'AGENT DE TERRAIN) */}
+        {/* MENU GESTION (DGI & SUPER ADMIN) */}
         {activeTab === 'menu' && user.role !== 'agent_terrain' && (
           <div>
             {menuView === 'main' && (
@@ -449,13 +516,114 @@ function App() {
                 )}
 
                 {(user.role === 'admin_dgi' || user.role === 'super_admin') && (
-                  <button onClick={() => setMenuView('add_car')} style={{ ...styles.buttonPrimary, background: 'rgba(56, 189, 248, 0.2)', border: '1px solid #38bdf8', color: '#38bdf8', justifyContent: 'flex-start', padding: '16px' }}>
-                    <PlusCircle size={22} /> Immatriculer un Engin (DGI)
-                  </button>
+                  <>
+                    <button onClick={() => setMenuView('add_car')} style={{ ...styles.buttonPrimary, background: 'rgba(56, 189, 248, 0.2)', border: '1px solid #38bdf8', color: '#38bdf8', justifyContent: 'flex-start', padding: '16px' }}>
+                      <PlusCircle size={22} /> Immatriculer un Engin (DGI)
+                    </button>
+                    <button onClick={() => setMenuView('import_csv')} style={{ ...styles.buttonPrimary, background: 'rgba(52, 211, 153, 0.2)', border: '1px solid #34d399', color: '#34d399', justifyContent: 'flex-start', padding: '16px' }}>
+                      <FileSpreadsheet size={22} /> Importation de Masse (CSV)
+                    </button>
+                  </>
                 )}
               </div>
             )}
 
+            {/* IMMATRICULATION DGI - DROPDOWNS PROFESSIONNELS SUR-MESURE */}
+            {menuView === 'add_car' && (
+              <div style={{ ...styles.card, maxWidth: '100%' }}>
+                <button onClick={() => setMenuView('main')} style={{ background: 'none', border: 'none', color: '#94a3b8', marginBottom: '12px', cursor: 'pointer' }}>← Retour au Menu</button>
+                <h3 style={{ margin: '0 0 16px 0', color: '#38bdf8' }}>Immatriculation DGI</h3>
+                <form onSubmit={enregistrerVehicule}>
+                  <input type="text" placeholder="Plaque RDC (ex: 1234AB01, MC1234AB)" required value={nouveauVehicule.plaque} onChange={(e) => setNouveauVehicule({ ...nouveauVehicule, plaque: e.target.value })} style={styles.input} />
+                  
+                  {/* SÉLECTEUR TYPE D'ENGIN */}
+                  <div style={styles.customDropdownHeader} onClick={() => setOpenSelect(openSelect === 'type_engin' ? null : 'type_engin')}>
+                    <span>{nouveauVehicule.type_engin || "Type d'engin"}</span>
+                    <ChevronDown size={18} />
+                  </div>
+                  {openSelect === 'type_engin' && (
+                    <div style={styles.customDropdownList}>
+                      {[
+                        { label: "Voiture / Taxi / SUV", val: "Voiture" },
+                        { label: "Moto / Wewa", val: "Moto" },
+                        { label: "Tricycle / Bajaj", val: "Bajaj" },
+                        { label: "Camion / Poids Lourds", val: "Camion" }
+                      ].map(opt => (
+                        <div key={opt.val} style={styles.customDropdownOption(nouveauVehicule.type_engin === opt.val)} onClick={() => { setNouveauVehicule({ ...nouveauVehicule, type_engin: opt.val }); setOpenSelect(null); }}>
+                          <span>{opt.label}</span>
+                          {nouveauVehicule.type_engin === opt.val && <Check size={16} />}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  <input type="text" placeholder="Marque & Modèle" required value={nouveauVehicule.marque} onChange={(e) => setNouveauVehicule({ ...nouveauVehicule, marque: e.target.value })} style={styles.input} />
+                  <input type="text" placeholder="Couleur" required value={nouveauVehicule.couleur} onChange={(e) => setNouveauVehicule({ ...nouveauVehicule, couleur: e.target.value })} style={styles.input} />
+                  <input type="text" placeholder="Nom du Propriétaire" required value={nouveauVehicule.proprietaire} onChange={(e) => setNouveauVehicule({ ...nouveauVehicule, proprietaire: e.target.value })} style={styles.input} />
+                  
+                  {/* SÉLECTEUR VIGNETTE */}
+                  <div style={styles.customDropdownHeader} onClick={() => setOpenSelect(openSelect === 'vignette' ? null : 'vignette')}>
+                    <span>
+                      {nouveauVehicule.annee_derniere_vignette === 2026 && "Vignette 2026 Payée"}
+                      {nouveauVehicule.annee_derniere_vignette === 2025 && "Vignette 2025 Payée (1 An Retard)"}
+                      {nouveauVehicule.annee_derniere_vignette === 2024 && "Vignette 2024 Payée (2 Ans Retard)"}
+                    </span>
+                    <ChevronDown size={18} />
+                  </div>
+                  {openSelect === 'vignette' && (
+                    <div style={styles.customDropdownList}>
+                      {[
+                        { label: "Vignette 2026 Payée", val: 2026 },
+                        { label: "Vignette 2025 Payée (1 An Retard)", val: 2025 },
+                        { label: "Vignette 2024 Payée (2 Ans Retard)", val: 2024 }
+                      ].map(opt => (
+                        <div key={opt.val} style={styles.customDropdownOption(nouveauVehicule.annee_derniere_vignette === opt.val)} onClick={() => { setNouveauVehicule({ ...nouveauVehicule, annee_derniere_vignette: opt.val }); setOpenSelect(null); }}>
+                          <span>{opt.label}</span>
+                          {nouveauVehicule.annee_derniere_vignette === opt.val && <Check size={16} />}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* SÉLECTEUR STATUT */}
+                  <div style={styles.customDropdownHeader} onClick={() => setOpenSelect(openSelect === 'statut' ? null : 'statut')}>
+                    <span>{nouveauVehicule.est_en_regle ? "✅ Statut : En Règle" : "❌ Statut : En Infraction"}</span>
+                    <ChevronDown size={18} />
+                  </div>
+                  {openSelect === 'statut' && (
+                    <div style={styles.customDropdownList}>
+                      {[
+                        { label: "✅ Statut : En Règle", val: true },
+                        { label: "❌ Statut : En Infraction", val: false }
+                      ].map(opt => (
+                        <div key={opt.val.toString()} style={styles.customDropdownOption(nouveauVehicule.est_en_regle === opt.val)} onClick={() => { setNouveauVehicule({ ...nouveauVehicule, est_en_regle: opt.val }); setOpenSelect(null); }}>
+                          <span>{opt.label}</span>
+                          {nouveauVehicule.est_en_regle === opt.val && <Check size={16} />}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  <button type="submit" style={{ ...styles.buttonPrimary, background: '#0284c7', marginTop: '10px' }}>Enregistrer l'engin</button>
+                </form>
+                {vehiculeMsg && <p style={{ marginTop: '12px' }}>{vehiculeMsg}</p>}
+              </div>
+            )}
+
+            {/* IMPORTATION MASSE CSV */}
+            {menuView === 'import_csv' && (
+              <div style={{ ...styles.card, maxWidth: '100%' }}>
+                <button onClick={() => setMenuView('main')} style={{ background: 'none', border: 'none', color: '#94a3b8', marginBottom: '12px', cursor: 'pointer' }}>← Retour au Menu</button>
+                <h3 style={{ margin: '0 0 16px 0', color: '#34d399' }}>Importation Fichier CSV (DGI)</h3>
+                <form onSubmit={importerCSV}>
+                  <input type="file" accept=".csv" required onChange={(e) => setCsvFile(e.target.files[0])} style={styles.input} />
+                  <button type="submit" style={{ ...styles.buttonPrimary, background: '#059669' }}>Charger la base de données</button>
+                </form>
+                {csvMsg && <p style={{ marginTop: '12px' }}>{csvMsg}</p>}
+              </div>
+            )}
+
+            {/* CRÉATION D'AGENTS - DÉSIGNATION RÉALISTE DU RÔLE TERRAIN */}
             {menuView === 'create_agent' && (
               <div style={{ ...styles.card, maxWidth: '100%' }}>
                 <button onClick={() => setMenuView('main')} style={{ background: 'none', border: 'none', color: '#94a3b8', marginBottom: '12px', cursor: 'pointer' }}>← Retour au Menu</button>
@@ -469,18 +637,37 @@ function App() {
                     <button type="button" onClick={genererMotDePasse} style={{ ...styles.buttonPrimary, width: 'auto', padding: '0 14px' }}><Wand2 size={18} /></button>
                   </div>
 
-                  <select value={nouvelAgent.role} onChange={(e) => setNouvelAgent({ ...nouvelAgent, role: e.target.value })} style={styles.input}>
-                    <option value="agent_terrain" style={{ background: '#0b1329' }}>Agent de Terrain (Police)</option>
-                    <option value="admin_dgi" style={{ background: '#0b1329' }}>Agent DGI (Immatriculation)</option>
-                    <option value="super_admin" style={{ background: '#0b1329' }}>Super Admin</option>
-                  </select>
+                  {/* SÉLECTEUR RÔLE PRO */}
+                  <div style={styles.customDropdownHeader} onClick={() => setOpenSelect(openSelect === 'role' ? null : 'role')}>
+                    <span>
+                      {nouvelAgent.role === 'agent_terrain' && "Agent de Terrain (Police / DGI)"}
+                      {nouvelAgent.role === 'admin_dgi' && "Agent DGI (Guichet Immatriculation)"}
+                      {nouvelAgent.role === 'super_admin' && "Super Admin (APDNK)"}
+                    </span>
+                    <ChevronDown size={18} />
+                  </div>
+                  {openSelect === 'role' && (
+                    <div style={styles.customDropdownList}>
+                      {[
+                        { label: "Agent de Terrain (Police / DGI)", val: "agent_terrain" },
+                        { label: "Agent DGI (Guichet Immatriculation)", val: "admin_dgi" },
+                        { label: "Super Admin (APDNK)", val: "super_admin" }
+                      ].map(opt => (
+                        <div key={opt.val} style={styles.customDropdownOption(nouvelAgent.role === opt.val)} onClick={() => { setNouvelAgent({ ...nouvelAgent, role: opt.val }); setOpenSelect(null); }}>
+                          <span>{opt.label}</span>
+                          {nouvelAgent.role === opt.val && <Check size={16} />}
+                        </div>
+                      ))}
+                    </div>
+                  )}
 
-                  <button type="submit" style={{ ...styles.buttonPrimary, background: '#f59e0b' }}>Créer l'agent</button>
+                  <button type="submit" style={{ ...styles.buttonPrimary, background: '#f59e0b', marginTop: '10px' }}>Créer l'agent</button>
                 </form>
                 {agentMsg && <p style={{ marginTop: '12px' }}>{agentMsg}</p>}
               </div>
             )}
 
+            {/* LISTE DES AGENTS */}
             {menuView === 'users_list' && (
               <div style={{ ...styles.card, maxWidth: '100%' }}>
                 <button onClick={() => setMenuView('main')} style={{ background: 'none', border: 'none', color: '#94a3b8', marginBottom: '12px', cursor: 'pointer' }}>← Retour au Menu</button>
@@ -498,29 +685,10 @@ function App() {
                 ))}
               </div>
             )}
-
-            {menuView === 'add_car' && (
-              <div style={{ ...styles.card, maxWidth: '100%' }}>
-                <button onClick={() => setMenuView('main')} style={{ background: 'none', border: 'none', color: '#94a3b8', marginBottom: '12px', cursor: 'pointer' }}>← Retour au Menu</button>
-                <h3 style={{ margin: '0 0 16px 0', color: '#38bdf8' }}>Immatriculer un Engin</h3>
-                <form onSubmit={enregistrerVehicule}>
-                  <input type="text" placeholder="Plaque (ex: 1234AB01)" required value={nouveauVehicule.plaque} onChange={(e) => setNouveauVehicule({ ...nouveauVehicule, plaque: e.target.value })} style={styles.input} />
-                  <input type="text" placeholder="Marque & Modèle (Voiture, Moto, Bajaj)" required value={nouveauVehicule.marque} onChange={(e) => setNouveauVehicule({ ...nouveauVehicule, marque: e.target.value })} style={styles.input} />
-                  <input type="text" placeholder="Couleur" required value={nouveauVehicule.couleur} onChange={(e) => setNouveauVehicule({ ...nouveauVehicule, couleur: e.target.value })} style={styles.input} />
-                  <input type="text" placeholder="Nom du Propriétaire" required value={nouveauVehicule.proprietaire} onChange={(e) => setNouveauVehicule({ ...nouveauVehicule, proprietaire: e.target.value })} style={styles.input} />
-                  <select value={nouveauVehicule.est_en_regle ? "true" : "false"} onChange={(e) => setNouveauVehicule({ ...nouveauVehicule, est_en_regle: e.target.value === "true" })} style={styles.input}>
-                    <option value="true" style={{ background: '#0b1329' }}>✅ En Règle (Taxes Payées)</option>
-                    <option value="false" style={{ background: '#0b1329' }}>❌ En Infraction</option>
-                  </select>
-                  <button type="submit" style={{ ...styles.buttonPrimary, background: '#0284c7' }}>Enregistrer l'engin</button>
-                </form>
-                {vehiculeMsg && <p style={{ marginTop: '12px' }}>{vehiculeMsg}</p>}
-              </div>
-            )}
           </div>
         )}
 
-       {/* HISTORIQUE DES CONTRÔLES DYNAMIQUE */}
+        {/* HISTORIQUE DES CONTRÔLES */}
         {activeTab === 'history' && (
           <div style={{ ...styles.card, maxWidth: '100%' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
@@ -549,7 +717,8 @@ function App() {
           </div>
         )}
       </div>  
-      {/* BARRE DU BAS DYNAMIQUE (LE MENU DISPARAÎT SI AGENT TERRAIN) */}
+
+      {/* BARRE DE NAVIGATION BASSE */}
       <div style={styles.bottomBar}>
         <button onClick={() => setActiveTab('home')} style={styles.navItem(activeTab === 'home')}>
           <Home size={22} />
