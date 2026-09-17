@@ -19,9 +19,8 @@ import {
   FileSpreadsheet,
   ChevronDown,
   Check,
-  TrendingUp,
-  AlertTriangle,
   CheckCircle,
+  AlertTriangle,
   DollarSign,
   Activity,
   Layers,
@@ -62,11 +61,10 @@ function App() {
 
   const [openSelect, setOpenSelect] = useState(null);
 
-  // ÉCRAN DE DÉMARRAGE (SPLASH SCREEN)
   useEffect(() => {
     const timer = setTimeout(() => {
       setShowSplash(false);
-    }, 2500);
+    }, 2200);
     return () => clearTimeout(timer);
   }, []);
 
@@ -87,7 +85,7 @@ function App() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          username: loginForm.username.trim(),
+          username: loginForm.username.trim().toLowerCase(),
           password: loginForm.password.trim()
         })
       });
@@ -97,22 +95,27 @@ function App() {
         throw new Error(errData.detail || "Identifiants incorrects.");
       }
       const data = await reponse.json();
-      setUser({ token: data.access_token, role: data.role, username: loginForm.username.trim() });
+      setUser({ token: data.access_token, role: data.role, username: loginForm.username.trim().toLowerCase() });
       setActiveTab('home');
     } catch (err) {
       setLoginErreur(err.message);
     }
   };
 
+  // CHARGEMENT RESTREINT ET SÉCURISÉ SELON LE RÔLE
   const chargerDonneesAdmin = async () => {
+    if (!user) return;
     try {
-      const resUsers = await fetch(`${API_URL}/api/v1/users/`);
-      if (resUsers.ok) setListeUsers(await resUsers.json());
+      if (user.role === 'super_admin') {
+        const resUsers = await fetch(`${API_URL}/api/v1/users/`);
+        if (resUsers.ok) setListeUsers(await resUsers.json());
+      }
 
-      const resHist = await fetch(`${API_URL}/api/v1/historique/`);
+      // Historique filtré selon le rôle du compte connecté
+      const resHist = await fetch(`${API_URL}/api/v1/historique/?username=${encodeURIComponent(user.username)}&role=${user.role}`);
       if (resHist.ok) setListeHistorique(await resHist.json());
     } catch (err) {
-      console.error("Erreur chargement admin", err);
+      console.error("Erreur chargement donnees", err);
     }
   };
 
@@ -257,13 +260,14 @@ function App() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          username: nouvelAgent.username.trim(),
+          username: nouvelAgent.username.trim().toLowerCase(),
           password: nouvelAgent.password.trim(),
           nom_complet: nouvelAgent.nom_complet.trim(),
           role: nouvelAgent.role
         })
       });
-      if (!reponse.ok) throw new Error("Erreur de création.");
+      const data = await reponse.json();
+      if (!reponse.ok) throw new Error(data.detail || "Erreur de création.");
 
       setAgentMsg(`✅ Agent créé ! Mot de passe : ${nouvelAgent.password}`);
       setNouvelAgent({ username: '', password: '', nom_complet: '', role: 'agent_terrain' });
@@ -285,9 +289,7 @@ function App() {
   const enRegleCount = listeHistorique.filter(h => h.est_en_regle).length;
   const infractionsCount = totalControles - enRegleCount;
   const tauxConformite = totalControles > 0 ? Math.round((enRegleCount / totalControles) * 100) : 100;
-  const mesControles = listeHistorique.filter(h => h.agent_username === user?.username);
 
-  // STYLE ROUGE PRESTIGE / BLANC NET (INSPIRATION DESIGN)
   const styles = {
     appBg: {
       minHeight: '100vh',
@@ -330,13 +332,21 @@ function App() {
       gap: '12px',
       marginBottom: '16px'
     },
-    statCard: (borderColor, textColor) => ({
+    statCard: (borderColor) => ({
       background: '#ffffff',
-      border: `1px solid ${borderColor}`,
+      border: `2px solid ${borderColor}`,
       borderRadius: '16px',
       padding: '14px',
-      boxShadow: '0 2px 10px rgba(0,0,0,0.03)',
-      color: textColor
+      boxShadow: '0 4px 12px rgba(0,0,0,0.05)',
+      display: 'flex',
+      flexDirection: 'column',
+      justifyContent: 'space-between'
+    }),
+    statNumber: (color) => ({
+      margin: '8px 0 0 0',
+      fontSize: '26px',
+      fontWeight: '900',
+      color: color || '#0f172a'
     }),
     input: {
       width: '100%',
@@ -431,21 +441,19 @@ function App() {
     })
   };
 
-  // 1. ÉCRAN DE DÉMARRAGE (SPLASH SCREEN)
   if (showSplash) {
     return (
       <div style={styles.splashBg}>
         <div style={{ padding: '20px', borderRadius: '30px', background: 'rgba(255,255,255,0.15)', marginBottom: '20px' }}>
           <ShieldCheck size={64} color="#ffffff" />
         </div>
-        <h1 style={{ fontSize: '32px', fontWeight: '900', margin: 0, letterSpacing: '1px' }}>Kin-Check</h1>
+        <h1 style={{ fontSize: '32px', fontWeight: '900', margin: 0 }}>Kin-Check</h1>
         <p style={{ color: '#fca5a5', fontSize: '15px', marginTop: '6px' }}>Solution APDNK & Régies Financières</p>
         <div style={{ marginTop: '40px', fontSize: '12px', opacity: 0.8 }}>Kinshasa, RDC</div>
       </div>
     );
   }
 
-  // 2. ÉCRAN DE CONNEXION
   if (!user) {
     return (
       <div style={styles.appBg}>
@@ -495,26 +503,19 @@ function App() {
   return (
     <div style={styles.appBg}>
       
-      {/* HEADER HAUT */}
+      {/* HEADER NET SANS "API LIVE" */}
       <div style={{ padding: '16px', background: '#ffffff', borderBottom: '1px solid #e2e8f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
           <ShieldCheck size={28} color="#991b1b" />
-          <div>
-            <span style={{ fontSize: '18px', fontWeight: '800', display: 'block', lineHeight: '1.2', color: '#0f172a' }}>Kin-Check</span>
-            <span style={{ fontSize: '10px', color: '#16a34a', display: 'flex', alignItems: 'center', gap: '4px', fontWeight: '600' }}>
-              <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#16a34a' }}></span> API Live
-            </span>
-          </div>
+          <span style={{ fontSize: '20px', fontWeight: '800', color: '#0f172a' }}>Kin-Check</span>
         </div>
         <button onClick={() => setUser(null)} style={{ background: 'none', border: 'none', color: '#dc2626', cursor: 'pointer' }}>
           <LogOut size={22} />
         </button>
       </div>
 
-      {/* CONTENU NAVIGATION */}
       <div style={{ flex: 1, padding: '16px', paddingBottom: '80px', overflowY: 'auto' }}>
         
-        {/* ONGLET ACCUEIL */}
         {activeTab === 'home' && (
           <div>
             <div style={{ ...styles.card, maxWidth: '100%', marginBottom: '16px', background: '#991b1b', color: '#ffffff', border: 'none' }}>
@@ -531,95 +532,94 @@ function App() {
               </div>
             </div>
 
-            {/* DASHBOARD PAR RÔLE */}
+            {/* VUE SUPER ADMIN (CHIFFRES TÈS LISIBLES EN ROUGE / NOIR / VERT) */}
             {user.role === 'super_admin' && (
               <div>
                 <h4 style={{ margin: '0 0 12px 0', fontSize: '13px', color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Observatoire Provincial</h4>
                 <div style={styles.statGrid}>
-                  <div style={styles.statCard('#cbd5e1', '#0f172a')}>
+                  <div style={styles.statCard('#991b1b')}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', color: '#991b1b' }}>
-                      <span style={{ fontSize: '12px', fontWeight: '600' }}>Total Scans</span>
+                      <span style={{ fontSize: '12px', fontWeight: '700' }}>Total Scans</span>
                       <Activity size={18} />
                     </div>
-                    <h2 style={{ margin: '8px 0 0 0', fontSize: '24px' }}>{totalControles}</h2>
+                    <h2 style={styles.statNumber('#991b1b')}>{totalControles}</h2>
                   </div>
 
-                  <div style={styles.statCard('#cbd5e1', '#0f172a')}>
+                  <div style={styles.statCard('#16a34a')}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', color: '#16a34a' }}>
-                      <span style={{ fontSize: '12px', fontWeight: '600' }}>Conformité</span>
+                      <span style={{ fontSize: '12px', fontWeight: '700' }}>Conformité</span>
                       <CheckCircle size={18} />
                     </div>
-                    <h2 style={{ margin: '8px 0 0 0', fontSize: '24px' }}>{tauxConformite}%</h2>
+                    <h2 style={styles.statNumber('#16a34a')}>{tauxConformite}%</h2>
                   </div>
 
-                  <div style={styles.statCard('#cbd5e1', '#0f172a')}>
+                  <div style={styles.statCard('#dc2626')}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', color: '#dc2626' }}>
-                      <span style={{ fontSize: '12px', fontWeight: '600' }}>Infractions</span>
+                      <span style={{ fontSize: '12px', fontWeight: '700' }}>Infractions</span>
                       <AlertTriangle size={18} />
                     </div>
-                    <h2 style={{ margin: '8px 0 0 0', fontSize: '24px' }}>{infractionsCount}</h2>
+                    <h2 style={{ ...styles.statNumber('#dc2626') }}>{infractionsCount}</h2>
                   </div>
 
-                  <div style={styles.statCard('#cbd5e1', '#0f172a')}>
+                  <div style={styles.statCard('#2563eb')}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', color: '#2563eb' }}>
-                      <span style={{ fontSize: '12px', fontWeight: '600' }}>Agents Actifs</span>
+                      <span style={{ fontSize: '12px', fontWeight: '700' }}>Agents Actifs</span>
                       <Users size={18} />
                     </div>
-                    <h2 style={{ margin: '8px 0 0 0', fontSize: '24px' }}>{listeUsers.length}</h2>
+                    <h2 style={styles.statNumber('#2563eb')}>{listeUsers.length}</h2>
                   </div>
                 </div>
               </div>
             )}
 
-            {/* DASHBOARD AGENT DGI */}
+            {/* VUE AGENT DGI */}
             {user.role === 'admin_dgi' && (
               <div>
-                <h4 style={{ margin: '0 0 12px 0', fontSize: '13px', color: '#64748b', textTransform: 'uppercase' }}>Performance Guichet DGI</h4>
+                <h4 style={{ margin: '0 0 12px 0', fontSize: '13px', color: '#64748b', textTransform: 'uppercase' }}>Performance Mes Scans</h4>
                 <div style={styles.statGrid}>
-                  <div style={styles.statCard('#cbd5e1', '#0f172a')}>
+                  <div style={styles.statCard('#2563eb')}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', color: '#2563eb' }}>
-                      <span style={{ fontSize: '12px' }}>Contrôles Total</span>
+                      <span style={{ fontSize: '12px', fontWeight: '700' }}>Mes Scans</span>
                       <Layers size={18} />
                     </div>
-                    <h2 style={{ margin: '8px 0 0 0', fontSize: '24px' }}>{totalControles}</h2>
+                    <h2 style={styles.statNumber('#2563eb')}>{totalControles}</h2>
                   </div>
 
-                  <div style={styles.statCard('#cbd5e1', '#0f172a')}>
+                  <div style={styles.statCard('#dc2626')}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', color: '#dc2626' }}>
-                      <span style={{ fontSize: '12px' }}>Avis à Recouvrir</span>
+                      <span style={{ fontSize: '12px', fontWeight: '700' }}>Infractions</span>
                       <DollarSign size={18} />
                     </div>
-                    <h2 style={{ margin: '8px 0 0 0', fontSize: '24px' }}>{infractionsCount}</h2>
+                    <h2 style={styles.statNumber('#dc2626')}>{infractionsCount}</h2>
                   </div>
                 </div>
               </div>
             )}
 
-            {/* DASHBOARD AGENT DE TERRAIN */}
+            {/* VUE AGENT DE TERRAIN */}
             {user.role === 'agent_terrain' && (
               <div>
-                <h4 style={{ margin: '0 0 12px 0', fontSize: '13px', color: '#64748b', textTransform: 'uppercase' }}>Statistiques de Patrouille</h4>
+                <h4 style={{ margin: '0 0 12px 0', fontSize: '13px', color: '#64748b', textTransform: 'uppercase' }}>Statistiques de Ma Patrouille</h4>
                 <div style={styles.statGrid}>
-                  <div style={styles.statCard('#cbd5e1', '#0f172a')}>
+                  <div style={styles.statCard('#991b1b')}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', color: '#991b1b' }}>
-                      <span style={{ fontSize: '12px' }}>Mes Scans</span>
+                      <span style={{ fontSize: '12px', fontWeight: '700' }}>Mes Scans</span>
                       <Search size={18} />
                     </div>
-                    <h2 style={{ margin: '8px 0 0 0', fontSize: '24px' }}>{mesControles.length}</h2>
+                    <h2 style={styles.statNumber('#991b1b')}>{totalControles}</h2>
                   </div>
 
-                  <div style={styles.statCard('#cbd5e1', '#0f172a')}>
+                  <div style={styles.statCard('#dc2626')}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', color: '#dc2626' }}>
-                      <span style={{ fontSize: '12px' }}>Infractions</span>
+                      <span style={{ fontSize: '12px', fontWeight: '700' }}>Infractions</span>
                       <AlertTriangle size={18} />
                     </div>
-                    <h2 style={{ margin: '8px 0 0 0', fontSize: '24px' }}>{mesControles.filter(h => !h.est_en_regle).length}</h2>
+                    <h2 style={styles.statNumber('#dc2626')}>{infractionsCount}</h2>
                   </div>
                 </div>
               </div>
             )}
 
-            {/* ACCÈS RAPIDES */}
             <div style={{ ...styles.card, maxWidth: '100%' }}>
               <h4 style={{ margin: '0 0 12px 0', fontSize: '14px', color: '#991b1b', textTransform: 'uppercase' }}>Actions Rapides</h4>
               <div style={{ display: 'grid', gridTemplateColumns: user.role === 'agent_terrain' ? '1fr' : '1fr 1fr', gap: '12px' }}>
@@ -676,14 +676,13 @@ function App() {
                     <h3 style={{ margin: '8px 0 12px 0', color: '#dc2626' }}>TOTAL À RECOUVRIR : {resultat.calcul_fiscal.total_a_payer?.toLocaleString()} CDF</h3>
                     
                     <button onClick={genererAMR} style={{ ...styles.buttonPrimary, background: '#16a34a', fontSize: '14px', padding: '10px' }}>
-                      <QrCode size={18} /> Generer QR Code Mobile Money
+                      <QrCode size={18} /> Générer QR Code Mobile Money
                     </button>
                   </div>
                 )}
               </div>
             )}
 
-            {/* MODALE QR CODE DE PAIEMENT AMR */}
             {amrData && (
               <div style={{ marginTop: '16px', padding: '16px', background: '#ffffff', borderRadius: '12px', border: '2px solid #16a34a', textAlign: 'center' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
@@ -887,11 +886,11 @@ function App() {
           </div>
         )}
 
-        {/* HISTORIQUE */}
+        {/* HISTORIQUE FILTRÉ AUTOMATIQUEMENT SELON LE COMPTE */}
         {activeTab === 'history' && (
           <div style={{ ...styles.card, maxWidth: '100%' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-              <h3 style={{ margin: 0, color: '#16a34a' }}>Historique des Contrôles</h3>
+              <h3 style={{ margin: 0, color: '#991b1b' }}>Historique des Contrôles</h3>
               <button 
                 onClick={chargerDonneesAdmin}
                 style={{ background: '#f1f5f9', border: '1px solid #cbd5e1', color: '#0f172a', padding: '6px 12px', borderRadius: '8px', cursor: 'pointer', fontSize: '12px' }}
@@ -901,13 +900,13 @@ function App() {
             </div>
             
             {listeHistorique.length === 0 ? (
-              <p style={{ color: '#64748b', fontSize: '14px' }}>Aucun contrôle enregistré pour le moment.</p>
+              <p style={{ color: '#64748b', fontSize: '14px' }}>Aucun contrôle enregistré pour ce compte.</p>
             ) : (
               listeHistorique.map(h => (
                 <div key={h.id} style={{ padding: '10px 0', borderBottom: '1px solid #e2e8f0', fontSize: '14px' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                     <strong>{h.plaque_recherchee}</strong>
-                    <span style={{ color: h.est_en_regle ? '#16a34a' : '#dc2626', fontWeight: '600' }}>{h.est_en_regle ? "Règle" : "Infraction"}</span>
+                    <span style={{ color: h.est_en_regle ? '#16a34a' : '#dc2626', fontWeight: '700' }}>{h.est_en_regle ? "Règle" : "Infraction"}</span>
                   </div>
                   <div style={{ fontSize: '12px', color: '#64748b' }}>Agent : {h.agent_username}</div>
                 </div>
@@ -917,7 +916,6 @@ function App() {
         )}
       </div>  
 
-      {/* BARRE DE NAVIGATION BASSE */}
       <div style={styles.bottomBar}>
         <button onClick={() => setActiveTab('home')} style={styles.navItem(activeTab === 'home')}>
           <Home size={22} />

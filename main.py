@@ -17,7 +17,6 @@ from groq import Groq
 import models, schemas, auth
 from database import engine, get_db
 
-# --- CONFIGURATION & INITIALISATION ---
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
 groq_client = Groq(api_key=GROQ_API_KEY)
 
@@ -27,10 +26,8 @@ models.Base.metadata.create_all(bind=engine)
 app = FastAPI(title="Kin-Check API - DGI & APDNK Portal", version="2.0.0")
 app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
 
-# --- REGEX DES PLAQUES CONGOLAISES (Normes RDC) ---
 PLAQUE_RDC_REGEX = r"^([0-9]{4}[A-Z]{2}[0-9]{2}|[A-Z]{2}[0-9]{4}[A-Z]{2}|[0-9]{3,4}[M][0-9]{2}|MC[0-9]{4}[A-Z]{2}|IT[0-9]{4}|FPMC[0-9]{4})$"
 
-# --- BARÈME FISCAL RDC (CDF) ---
 BAREMES_TAXES = {
     "Voiture": {"vignette_annuelle": 75000, "amende_forfaitaire": 50000},
     "Moto": {"vignette_annuelle": 25000, "amende_forfaitaire": 15000},
@@ -42,13 +39,13 @@ def valider_and_nettoyer_plaque(plaque: str) -> str:
     if not plaque:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Aucune plaque détectée sur l'image."
+            detail="Aucune plaque détectée."
         )
     plaque_clean = str(plaque).upper().replace(" ", "").replace("-", "").strip()
     if not re.match(PLAQUE_RDC_REGEX, plaque_clean):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"La plaque '{plaque_clean}' ne respecte pas les normes d'immatriculation RDC."
+            detail=f"La plaque '{plaque_clean}' ne respecte pas les normes RDC."
         )
     return plaque_clean
 
@@ -83,7 +80,6 @@ def calculer_dette_fiscale(type_engin: str, annee_derniere_vignette: Optional[in
         "devise": "CDF"
     }
 
-# --- CORS ---
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -92,7 +88,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# --- INITIALISATION SUPER ADMIN ---
 def init_super_admin():
     db: Session = next(get_db())
     admin = db.query(models.User).filter(models.User.username == "admin@kincheck.cd").first()
@@ -114,11 +109,11 @@ def init_super_admin():
 def startup_event():
     init_super_admin()
 
-# --- AUTHENTIFICATION ---
+# --- AUTHENTIFICATION SÉCURISÉE (GESTION DE LA CASSE EMAIL) ---
 @app.post("/token", response_model=schemas.Token, tags=["Authentification"])
 def login(form_data: dict, db: Session = Depends(get_db)):
-    username = form_data.get("username", "").strip()
-    password = form_data.get("password", "").strip()
+    username = str(form_data.get("username", "")).strip().lower()
+    password = str(form_data.get("password", "")).strip()
 
     user = db.query(models.User).filter(models.User.username == username).first()
     
@@ -134,7 +129,7 @@ def login(form_data: dict, db: Session = Depends(get_db)):
 # --- GESTION DES AGENTS ---
 @app.post("/api/v1/users/", response_model=schemas.UserResponse, tags=["Administration"])
 def enregistrer_agent(user_data: schemas.UserCreate, db: Session = Depends(get_db)):
-    username_clean = user_data.username.strip()
+    username_clean = str(user_data.username).strip().lower()
     db_user = db.query(models.User).filter(models.User.username == username_clean).first()
     if db_user:
         raise HTTPException(status_code=400, detail="Ce nom d'utilisateur est déjà utilisé.")
@@ -184,7 +179,7 @@ def lire_vehicule(plaque: str, agent_username: str = "agent_inconnu", db: Sessio
         
         raise HTTPException(
             status_code=404, 
-            detail=f"Plaque '{plaque_clean}' non répertoriée dans le fichier central de la DGI."
+            detail=f"Plaque '{plaque_clean}' non répertoriée au fichier central de la DGI."
         )
 
     type_engin = getattr(vehicule, "type_engin", "Voiture") or "Voiture"
@@ -230,7 +225,6 @@ def creer_vehicule(vehicule: schemas.VehiculeCreate, db: Session = Depends(get_d
     db.refresh(nouveau_vehicule)
     return nouveau_vehicule
 
-# --- IMPORTATION DE MASSE (EXCEL / CSV) POUR LA DGI ---
 @app.post("/api/v1/vehicules/import_csv", tags=["DGI - Importation de Masse"])
 async def importer_vehicules_csv(file: UploadFile = File(...), db: Session = Depends(get_db)):
     if not file.filename.endswith('.csv'):
@@ -273,7 +267,6 @@ async def importer_vehicules_csv(file: UploadFile = File(...), db: Session = Dep
         "doublons_ignores": doublons
     }
 
-# --- PAIEMENTS & RECOUVREMENT ---
 @app.post("/api/v1/paiements/generer-amr", tags=["Paiements & Recouvrement"])
 def generer_avis_recouvrement(plaque: str, montant: float, agent_username: str, db: Session = Depends(get_db)):
     plaque_clean = plaque.upper().replace(" ", "").replace("-", "").strip()
@@ -288,12 +281,18 @@ def generer_avis_recouvrement(plaque: str, montant: float, agent_username: str, 
         "qr_payload": f"KINCHECK:{reference_unique}:{plaque_clean}:{montant}"
     }
 
-# --- HISTORIQUE ---
+# --- HISTORIQUE DYNAMIQUE FILTRÉ PAR RÔLE ---
 @app.get("/api/v1/historique/", response_model=List[schemas.HistoriqueResponse], tags=["Administration"])
-def lister_historique(db: Session = Depends(get_db)):
-    return db.query(models.HistoriqueControle).order_by(models.HistoriqueControle.date_controle.desc()).all()
+def lister_historique(username: Optional[str] = None, role: Optional[str] = None, db: Session = Depends(get_db)):
+    query = db.query(models.HistoriqueControle)
+    
+    # Si c'est un Super Admin, il voit TOUT. Si c'est un agent (Terrain ou DGI), il ne voit QUE ses propres contrôles.
+    if role != "super_admin" and username:
+        query = query.filter(models.HistoriqueControle.agent_username == username)
+        
+    return query.order_by(models.HistoriqueControle.date_controle.desc()).all()
 
-# --- MODULE IA VISION (GROQ) OPTIMISÉ & 100% EN FRANÇAIS ---
+# --- MODULE IA VISION GROQ ---
 @app.post("/api/v1/ia/analyser-plaque", tags=["IA & Vision Groq"])
 async def analyser_plaque_avec_groq(file: UploadFile = File(...)):
     try:
@@ -339,23 +338,21 @@ async def analyser_plaque_avec_groq(file: UploadFile = File(...)):
                 continue
         
         if not response:
-            raise HTTPException(status_code=400, detail="Service d'analyse photo indisponible pour le moment.")
+            raise HTTPException(status_code=400, detail="Service d'analyse photo indisponible.")
         
         resultat_json = json.loads(response.choices[0].message.content)
         plaque_brute = resultat_json.get("plaque")
 
-        # GESTION SÉCURISÉE DES ERREURS NONE TYPE ET TEXTES VIDES
         if not plaque_brute or str(plaque_brute).strip() == "":
             raise HTTPException(
                 status_code=400, 
-                detail="Aucune plaque n'a été détectée. Veuillez reprendre la photo avec un meilleur éclairage."
+                detail="Aucune plaque n'a été détectée. Veuillez reprendre la photo."
             )
 
         plaque_clean = str(plaque_brute).upper().replace(" ", "").replace("-", "").strip()
-
         return {"plaque": plaque_clean}
         
     except HTTPException as http_e:
         raise http_e
     except Exception as e:
-        raise HTTPException(status_code=500, detail="Erreur lors de la lecture de l'image. Veuillez réessayer.")
+        raise HTTPException(status_code=500, detail="Erreur lors de la lecture de l'image.")
