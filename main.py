@@ -26,7 +26,8 @@ models.Base.metadata.create_all(bind=engine)
 app = FastAPI(title="Kin-Check API - DGI & APDNK Portal", version="2.0.0")
 app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
 
-PLAQUE_RDC_REGEX = r"^([0-9]{4}[A-Z]{2}[0-9]{2}|[A-Z]{2}[0-9]{4}[A-Z]{2}|[0-9]{3,4}[M][0-9]{2}|MC[0-9]{4}[A-Z]{2}|IT[0-9]{4}|FPMC[0-9]{4})$"
+# --- REGEX DES PLAQUES CONGOLAISES (Mise à jour avec séries provinciales comme 01SN200) ---
+PLAQUE_RDC_REGEX = r"^([0-9]{2,4}[A-Z]{2}[0-9]{2,4}|[A-Z]{2}[0-9]{4}[A-Z]{2}|[0-9]{3,4}[M][0-9]{2}|MC[0-9]{4}[A-Z]{2}|IT[0-9]{4}|FPMC[0-9]{4}|[0-9]{2}[A-Z]{2}[0-9]{3})$"
 
 BAREMES_TAXES = {
     "Voiture": {"vignette_annuelle": 75000, "amende_forfaitaire": 50000},
