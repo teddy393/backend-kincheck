@@ -10,6 +10,7 @@ import json
 import re
 import csv
 import io
+import uuid
 from datetime import datetime
 from groq import Groq
 
@@ -38,11 +39,16 @@ BAREMES_TAXES = {
 }
 
 def valider_and_nettoyer_plaque(plaque: str) -> str:
-    plaque_clean = plaque.upper().replace(" ", "").replace("-", "").strip()
+    if not plaque:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Aucune plaque détectée sur l'image."
+        )
+    plaque_clean = str(plaque).upper().replace(" ", "").replace("-", "").strip()
     if not re.match(PLAQUE_RDC_REGEX, plaque_clean):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"La plaque '{plaque}' ne respecte pas les normes d'immatriculation RDC (ex: 1234AB01, MC1234AB)."
+            detail=f"La plaque '{plaque_clean}' ne respecte pas les normes d'immatriculation RDC."
         )
     return plaque_clean
 
@@ -61,7 +67,6 @@ def calculer_dette_fiscale(type_engin: str, annee_derniere_vignette: Optional[in
             "devise": "CDF"
         }
 
-    # Calcul des arriérés
     derniere_payee = annee_derniere_vignette if annee_derniere_vignette else (annee_actuelle - 1)
     annees_retard = max(1, annee_actuelle - derniere_payee)
     
@@ -177,17 +182,11 @@ def lire_vehicule(plaque: str, agent_username: str = "agent_inconnu", db: Sessio
         db.add(entree_log)
         db.commit()
         
-        # Amende forfaitaire pour véhicule non répertorié à la DGI
-        calcul_defaut = calculer_dette_fiscale("Voiture", None, False)
-        return {
-            "plaque": plaque_clean,
-            "statut": "NON_REPERTORIE",
-            "est_en_regle": False,
-            "message": "Véhicule non immatriculé au répertoire de la DGI / DGRK.",
-            "calcul_fiscal": calcul_defaut
-        }
+        raise HTTPException(
+            status_code=404, 
+            detail=f"Plaque '{plaque_clean}' non répertoriée dans le fichier central de la DGI."
+        )
 
-    # Calcul de la situation fiscale exacte
     type_engin = getattr(vehicule, "type_engin", "Voiture") or "Voiture"
     derniere_vignette = getattr(vehicule, "annee_derniere_vignette", 2024)
     calcul_fiscal = calculer_dette_fiscale(type_engin, derniere_vignette, vehicule.est_en_regle)
@@ -215,7 +214,6 @@ def lire_vehicule(plaque: str, agent_username: str = "agent_inconnu", db: Sessio
 def creer_vehicule(vehicule: schemas.VehiculeCreate, db: Session = Depends(get_db)):
     plaque_valide = valider_and_nettoyer_plaque(vehicule.plaque)
 
-    # Vérification Anti-Doublon
     db_vehicule = db.query(models.Vehicule).filter(models.Vehicule.plaque == plaque_valide).first()
     if db_vehicule:
         raise HTTPException(
@@ -275,13 +273,27 @@ async def importer_vehicules_csv(file: UploadFile = File(...), db: Session = Dep
         "doublons_ignores": doublons
     }
 
+# --- PAIEMENTS & RECOUVREMENT ---
+@app.post("/api/v1/paiements/generer-amr", tags=["Paiements & Recouvrement"])
+def generer_avis_recouvrement(plaque: str, montant: float, agent_username: str, db: Session = Depends(get_db)):
+    plaque_clean = plaque.upper().replace(" ", "").replace("-", "").strip()
+    reference_unique = f"AMR-KIN-{uuid.uuid4().hex[:8].upper()}"
+    
+    return {
+        "reference": reference_unique,
+        "plaque": plaque_clean,
+        "montant_cdf": montant,
+        "agent": agent_username,
+        "statut_paiement": "EN_ATTENTE",
+        "qr_payload": f"KINCHECK:{reference_unique}:{plaque_clean}:{montant}"
+    }
+
 # --- HISTORIQUE ---
 @app.get("/api/v1/historique/", response_model=List[schemas.HistoriqueResponse], tags=["Administration"])
 def lister_historique(db: Session = Depends(get_db)):
     return db.query(models.HistoriqueControle).order_by(models.HistoriqueControle.date_controle.desc()).all()
 
-# --- MODULE IA VISION (GROQ) ---
-# --- MODULE IA VISION (GROQ) OPTIMISÉ TOKENS ---
+# --- MODULE IA VISION (GROQ) OPTIMISÉ & 100% EN FRANÇAIS ---
 @app.post("/api/v1/ia/analyser-plaque", tags=["IA & Vision Groq"])
 async def analyser_plaque_avec_groq(file: UploadFile = File(...)):
     try:
@@ -306,7 +318,7 @@ async def analyser_plaque_avec_groq(file: UploadFile = File(...)):
                             "content": [
                                 {
                                     "type": "text", 
-                                    "text": 'Analyse cette image de véhicule. Extrais uniquement le numéro de la plaque d\'immatriculation. Réponds strictly au format JSON : {"plaque": "1234AB01"}.'
+                                    "text": 'Analyse cette image de véhicule. Extrais uniquement le numéro de la plaque d\'immatriculation. Réponds strictly au format JSON : {"plaque": "1234AB01"}. Si aucune plaque n\'est visible, réponds : {"plaque": ""}.'
                                 },
                                 {
                                     "type": "image_url",
@@ -318,7 +330,7 @@ async def analyser_plaque_avec_groq(file: UploadFile = File(...)):
                         }
                     ],
                     response_format={"type": "json_object"},
-                    max_tokens=30  # <-- RESTRICTION DES TOKENS POUR ÉVITER L'ERREUR 429
+                    max_tokens=30
                 )
                 if response:
                     break
@@ -327,13 +339,23 @@ async def analyser_plaque_avec_groq(file: UploadFile = File(...)):
                 continue
         
         if not response:
-            raise HTTPException(status_code=400, detail=f"Aucun modèle Vision disponible : {str(dernier_erreur)}")
+            raise HTTPException(status_code=400, detail="Service d'analyse photo indisponible pour le moment.")
         
         resultat_json = json.loads(response.choices[0].message.content)
-        plaque_brute = resultat_json.get("plaque", "")
-        plaque_clean = plaque_brute.upper().replace(" ", "").replace("-", "").strip()
+        plaque_brute = resultat_json.get("plaque")
+
+        # GESTION SÉCURISÉE DES ERREURS NONE TYPE ET TEXTES VIDES
+        if not plaque_brute or str(plaque_brute).strip() == "":
+            raise HTTPException(
+                status_code=400, 
+                detail="Aucune plaque n'a été détectée. Veuillez reprendre la photo avec un meilleur éclairage."
+            )
+
+        plaque_clean = str(plaque_brute).upper().replace(" ", "").replace("-", "").strip()
 
         return {"plaque": plaque_clean}
         
+    except HTTPException as http_e:
+        raise http_e
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Erreur d'analyse IA : {str(e)}")
+        raise HTTPException(status_code=500, detail="Erreur lors de la lecture de l'image. Veuillez réessayer.")
