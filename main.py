@@ -28,7 +28,22 @@ app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
 
 # --- REGEX DES PLAQUES CONGOLAISES (Mise à jour avec séries provinciales comme 01SN200) ---
 PLAQUE_RDC_REGEX = r"^([0-9]{2,4}[A-Z]{2}[0-9]{2,4}|[A-Z]{2}[0-9]{4}[A-Z]{2}|[0-9]{3,4}[M][0-9]{2}|MC[0-9]{4}[A-Z]{2}|IT[0-9]{4}|FPMC[0-9]{4}|[0-9]{2}[A-Z]{2}[0-9]{3})$"
+# --- DICTIONNAIRE ET DÉTECTION PROVINCE ---
+PROVINCES_RDC = {
+    "KN": "Kinshasa", "SN": "Sankuru", "HK": "Haut-Katanga", "NK": "Nord-Kivu",
+    "SK": "Sud-Kivu", "BC": "Congo-Central", "EQ": "Équateur", "PO": "Tshopo",
+    "KW": "Kwilu", "KG": "Kwango", "KC": "Kasaï-Central", "KO": "Kasaï-Oriental",
+    "KS": "Kasaï", "LU": "Lualaba", "MN": "Maniema", "MO": "Mongala",
+    "NU": "Nord-Ubangi", "SU": "Sud-Ubangi", "IT": "Ituri", "HL": "Haut-Lomami",
+    "HU": "Haut-Uele", "BU": "Bas-Uele", "MA": "Mai-Ndombe", "TS": "Tshuapa"
+}
 
+def detecter_province(plaque: str) -> str:
+    plaque_clean = str(plaque).upper().replace(" ", "").replace("-", "").strip()
+    for code, nom in PROVINCES_RDC.items():
+        if code in plaque_clean:
+            return f"{nom} ({code})"
+    return "Province Non Identifiée / Immatriculation Nationale"
 BAREMES_TAXES = {
     "Voiture": {"vignette_annuelle": 75000, "amende_forfaitaire": 50000},
     "Moto": {"vignette_annuelle": 25000, "amende_forfaitaire": 15000},
